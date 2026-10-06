@@ -8,7 +8,7 @@ import type { Room } from '@/types/room';
 import type { Inspect } from '@/types/inspect';
 import { BODY_MATERIAL_LABEL, BODY_SHAPE_LABEL } from '@/types/body';
 import { COAT_STATE_LABEL, PAINT_TYPE_LABEL } from '@/types/coat';
-import { ROOM_VERDICT_LABEL } from '@/types/room';
+import { ROOM_VERDICT_LABEL, effectiveVerdict } from '@/types/room';
 import { INSPECT_VERDICT_LABEL } from '@/types/inspect';
 import type { LacquerSnapshot } from './db';
 
@@ -75,7 +75,11 @@ export function buildReworkList(
     lines.push(
       `   关联荫房：${
         room
-          ? `${room.date}　${room.tempC}℃ / ${room.humidityPct}%（${ROOM_VERDICT_LABEL[room.verdict]}）`
+          ? `${room.date}　${room.tempC}℃ / ${room.humidityPct}%（入房${ROOM_VERDICT_LABEL[room.verdict]}）${
+              room.remeasure
+                ? `；复测 ${room.remeasure.tempC}℃ / ${room.remeasure.humidityPct}%（${ROOM_VERDICT_LABEL[room.remeasure.verdict]}，复测人 ${room.remeasure.operator || '未填写'}）`
+                : ''
+            }`
           : '未指定'
       }`,
     );
@@ -96,9 +100,9 @@ export function exportReworkList(
   return filename;
 }
 
-/** 工序台账 CSV（全部胎体 + 道次 + 荫房） */
+/** 工序台账 CSV（全部胎体 + 道次 + 荫房；荫房判定列入房判定，复测与有效判定另列） */
 export function exportLedgerCsv(bodies: Body[], coats: Coat[], rooms: Room[]): string {
-  const header = ['胎体编号', '材质', '器型', '尺寸(mm)', '委托/藏家', '道次', '漆种', '色名', '涂刷日期', '湿膜(μm)', '道次状态', '待复检', '荫房日期', '温度(℃)', '湿度(%)', '判定'];
+  const header = ['胎体编号', '材质', '器型', '尺寸(mm)', '委托/藏家', '道次', '漆种', '色名', '涂刷日期', '湿膜(μm)', '道次状态', '待复检', '荫房日期', '温度(℃)', '湿度(%)', '判定(入房)', '复测结论', '有效判定'];
   const lines: string[] = [header.map(csvCell).join(',')];
   bodies.forEach((body) => {
     const bodyCoats = coats.filter((item) => item.bodyId === body.id).sort((a, b) => a.seq - b.seq);
@@ -125,6 +129,10 @@ export function exportLedgerCsv(bodies: Body[], coats: Coat[], rooms: Room[]): s
           room ? room.tempC : '',
           room ? room.humidityPct : '',
           room ? ROOM_VERDICT_LABEL[room.verdict] : '',
+          room?.remeasure
+            ? `${room.remeasure.tempC}℃/${room.remeasure.humidityPct}%·${ROOM_VERDICT_LABEL[room.remeasure.verdict]}·${room.remeasure.operator || '未填写'}`
+            : '',
+          room ? ROOM_VERDICT_LABEL[effectiveVerdict(room)] : '',
         ]
           .map(csvCell)
           .join(','),

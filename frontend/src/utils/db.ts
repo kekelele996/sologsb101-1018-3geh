@@ -1,6 +1,7 @@
 /**
  * IndexedDB 持久化层（Dexie 封装）
- * - 数据结构版本号与升级迁移逻辑（v1 → v2：Coat 增加 paintType 索引并回填历史记录）
+ * - 数据结构版本号与升级迁移逻辑（v1 → v2：Coat 增加 paintType 索引并回填历史记录；
+ *   v2 → v3：Room 增加 remeasure 复测子记录并回填 null）
  * - 六张业务表的增删改查与整库导入导出
  * - 首次打开自动播种互相引用的演示数据（幂等）
  * 纯前端应用：不依赖任何后端服务或数据库。
@@ -17,7 +18,7 @@ import type { Inspect } from '@/types/inspect';
 export const DB_NAME = 'gblacquer';
 
 /** 当前数据结构版本号 */
-export const DB_SCHEMA_VERSION = 2;
+export const DB_SCHEMA_VERSION = 3;
 
 /** localStorage 侧少量元数据键 */
 export const LS_KEYS = {
@@ -119,6 +120,25 @@ class LacquerDatabase extends Dexie {
             if (typeof coat.thicknessUm !== 'number') coat.thicknessUm = 40;
           });
       });
+
+    // v3：Room 增加 remeasure 复测子记录；历史记录回填 remeasure = null（未复测，仍按入房那次判定）
+    this.version(DB_SCHEMA_VERSION)
+      .stores({
+        bodies: 'id, code, material, shape, state, updatedAt',
+        coats: 'id, bodyId, seq, paintType, state, needRecheck, updatedAt',
+        rooms: 'id, bodyId, date, verdict, updatedAt',
+        polishes: 'id, bodyId, seq, method, updatedAt',
+        inlays: 'id, bodyId, type, position, updatedAt',
+        inspects: 'id, bodyId, verdict, date, updatedAt',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table<Room>('rooms')
+          .toCollection()
+          .modify((room) => {
+            if (room.remeasure === undefined) room.remeasure = null;
+          });
+      });
   }
 }
 
@@ -188,17 +208,27 @@ export async function seedDatabase(): Promise<void> {
     { id: 'coat_0102', bodyId: 'body_01', seq: 2, paintType: 'color', colorName: '朱红', coatDate: '2026-03-06', thicknessUm: 45, state: 'toPolish', needRecheck: true, createdAt: now - 86400000 * 7, updatedAt: now - 86400000 * 2 },
     { id: 'coat_0103', bodyId: 'body_01', seq: 3, paintType: 'topcoat', colorName: '推光本色', coatDate: '2026-03-12', thicknessUm: 30, state: 'todo', needRecheck: false, createdAt: now - 86400000 * 6, updatedAt: now - 86400000 * 6 },
     { id: 'coat_0201', bodyId: 'body_02', seq: 1, paintType: 'raw', colorName: '漆黑', coatDate: '2026-03-03', thicknessUm: 35, state: 'done', needRecheck: false, createdAt: now - 86400000 * 8, updatedAt: now - 86400000 * 7 },
-    { id: 'coat_0202', bodyId: 'body_02', seq: 2, paintType: 'color', colorName: '赭石', coatDate: '2026-03-08', thicknessUm: 42, state: 'coated', needRecheck: true, createdAt: now - 86400000 * 5, updatedAt: now - 86400000 },
+    { id: 'coat_0202', bodyId: 'body_02', seq: 2, paintType: 'color', colorName: '赭石', coatDate: '2026-03-08', thicknessUm: 42, state: 'coated', needRecheck: false, createdAt: now - 86400000 * 5, updatedAt: now - 86400000 },
     { id: 'coat_0301', bodyId: 'body_03', seq: 1, paintType: 'raw', colorName: '漆黑', coatDate: '2026-02-10', thicknessUm: 38, state: 'done', needRecheck: false, createdAt: now - 86400000 * 26, updatedAt: now - 86400000 * 25 },
     { id: 'coat_0302', bodyId: 'body_03', seq: 2, paintType: 'color', colorName: '石绿', coatDate: '2026-02-18', thicknessUm: 44, state: 'done', needRecheck: false, createdAt: now - 86400000 * 20, updatedAt: now - 86400000 * 18 },
     { id: 'coat_0303', bodyId: 'body_03', seq: 3, paintType: 'topcoat', colorName: '描金', coatDate: '2026-02-26', thicknessUm: 28, state: 'done', needRecheck: false, createdAt: now - 86400000 * 14, updatedAt: now - 86400000 * 4 },
   ];
 
   const rooms: Room[] = [
-    { id: 'room_0101', bodyId: 'body_01', date: '2026-03-03', tempC: 24, humidityPct: 78, inAt: '09:00', outAt: '21:00', verdict: 'suitable', createdAt: now - 86400000 * 10, updatedAt: now - 86400000 * 10 },
-    { id: 'room_0102', bodyId: 'body_01', date: '2026-03-07', tempC: 27, humidityPct: 56, inAt: '08:30', outAt: '20:00', verdict: 'dry', createdAt: now - 86400000 * 6, updatedAt: now - 86400000 * 2 },
-    { id: 'room_0201', bodyId: 'body_02', date: '2026-03-05', tempC: 23, humidityPct: 91, inAt: '10:00', outAt: '22:30', verdict: 'wet', createdAt: now - 86400000 * 5, updatedAt: now - 86400000 },
-    { id: 'room_0301', bodyId: 'body_03', date: '2026-02-20', tempC: 25, humidityPct: 76, inAt: '09:30', outAt: '21:30', verdict: 'suitable', createdAt: now - 86400000 * 18, updatedAt: now - 86400000 * 18 },
+    { id: 'room_0101', bodyId: 'body_01', date: '2026-03-03', tempC: 24, humidityPct: 78, inAt: '09:00', outAt: '21:00', verdict: 'suitable', remeasure: null, createdAt: now - 86400000 * 10, updatedAt: now - 86400000 * 10 },
+    // 入房偏干，调环境后复测仍偏干：标记为复测阶段越界，道次维持待复检
+    {
+      id: 'room_0102', bodyId: 'body_01', date: '2026-03-07', tempC: 27, humidityPct: 56, inAt: '08:30', outAt: '20:00', verdict: 'dry',
+      remeasure: { tempC: 26, humidityPct: 61, inAt: '09:10', outAt: '20:40', operator: '王丽', verdict: 'dry', measuredAt: now - 86400000 * 2 },
+      createdAt: now - 86400000 * 6, updatedAt: now - 86400000 * 2,
+    },
+    // 入房偏湿，复测回到适宜区间：超标统计与待复检按复测结论清零
+    {
+      id: 'room_0201', bodyId: 'body_02', date: '2026-03-05', tempC: 23, humidityPct: 91, inAt: '10:00', outAt: '22:30', verdict: 'wet',
+      remeasure: { tempC: 24, humidityPct: 78, inAt: '10:20', outAt: '22:10', operator: '李成', verdict: 'suitable', measuredAt: now - 43200000 },
+      createdAt: now - 86400000 * 5, updatedAt: now - 43200000,
+    },
+    { id: 'room_0301', bodyId: 'body_03', date: '2026-02-20', tempC: 25, humidityPct: 76, inAt: '09:30', outAt: '21:30', verdict: 'suitable', remeasure: null, createdAt: now - 86400000 * 18, updatedAt: now - 86400000 * 18 },
   ];
 
   const polishes: Polish[] = [

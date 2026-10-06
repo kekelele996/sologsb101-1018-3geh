@@ -7,7 +7,7 @@ import { useBodyStore } from '@/stores/bodyStore';
 import { useCoatStore } from '@/stores/coatStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { dryingHours, roomStayHours } from '@/utils/humidity';
-import { ROOM_VERDICT_LABEL } from '@/types/room';
+import { ROOM_VERDICT_LABEL, effectiveReading, effectiveVerdict } from '@/types/room';
 import { COAT_STATE_LABEL } from '@/types/coat';
 import type { BodyStat } from '@/types/body';
 
@@ -55,7 +55,9 @@ export function useCoatProgress(): CoatProgressResult {
       const done = bodyCoats.filter((coat) => coat.state === 'done').length;
       const current = bodyCoats.find((coat) => coat.state !== 'done');
       const lastRoom = bodyRooms[bodyRooms.length - 1];
-      const overCount = bodyRooms.filter((room) => room.verdict !== 'suitable').length;
+      // 超标次数按有效判定：有复测按复测结论，没复测按入房那次
+      const overCount = bodyRooms.filter((room) => effectiveVerdict(room) !== 'suitable').length;
+      const lastReading = lastRoom ? effectiveReading(lastRoom) : null;
       const waitHours = lastRoom
         ? roomStayHours(lastRoom.inAt, lastRoom.outAt)
         : lastRoom === undefined && bodyCoats[0]
@@ -69,8 +71,8 @@ export function useCoatProgress(): CoatProgressResult {
         currentSeq: current ? current.seq : 0,
         roomCount: bodyRooms.length,
         roomOverCount: overCount,
-        lastRoomVerdict: lastRoom
-          ? `${lastRoom.date}　${lastRoom.tempC}℃ / ${lastRoom.humidityPct}%（${ROOM_VERDICT_LABEL[lastRoom.verdict]}）`
+        lastRoomVerdict: lastRoom && lastReading
+          ? `${lastRoom.date}　${lastReading.tempC}℃ / ${lastReading.humidityPct}%（${lastReading.remeasured ? '复测·' : ''}${ROOM_VERDICT_LABEL[lastReading.verdict]}）`
           : '暂无记录',
         polishCount: 0,
         inlayCount: 0,

@@ -18,6 +18,7 @@ import { ROUTES } from './router';
 import { useBodyStore } from './stores/bodyStore';
 import { useCoatStore } from './stores/coatStore';
 import { useRoomStore } from './stores/roomStore';
+import { useRoomRetestStore } from './stores/roomRetestStore';
 import { initDatabase } from './utils/db';
 import { BODY_MATERIAL_LABEL, BODY_SHAPE_LABEL, BODY_STATE_LABEL } from './types/body';
 
@@ -35,6 +36,8 @@ export default function App() {
   const loadCoats = useCoatStore((state) => state.loadCoats);
   const rooms = useRoomStore((state) => state.rooms);
   const loadRooms = useRoomStore((state) => state.loadRooms);
+  const retests = useRoomRetestStore((state) => state.retests);
+  const loadRetests = useRoomRetestStore((state) => state.loadRetests);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +45,7 @@ export default function App() {
       try {
         await initDatabase();
         if (cancelled) return;
-        await Promise.all([loadBodies(), loadCoats(), loadRooms()]);
+        await Promise.all([loadBodies(), loadCoats(), loadRooms(), loadRetests()]);
       } catch (error) {
         if (cancelled) return;
         message.error(`本地数据库初始化失败：${error instanceof Error ? error.message : '未知错误'}`);
@@ -51,7 +54,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [loadBodies, loadCoats, loadRooms, message]);
+  }, [loadBodies, loadCoats, loadRooms, loadRetests, message]);
 
   const currentBody = bodies.find((body) => body.id === currentBodyId) ?? null;
   const selectedKey = location.pathname.startsWith('/coats')
@@ -98,7 +101,7 @@ export default function App() {
               <DashboardOutlined /> 胎体 {bodies.length} 件
             </span>
             <span>髹涂道次 {coats.length} 道</span>
-            <span>荫房记录 {rooms.length} 条</span>
+            <span>荫房记录 {rooms.length} 条{retests.length > 0 ? `（复测 ${retests.length} 条）` : ''}</span>
           </Space>
         </div>
       </Sider>

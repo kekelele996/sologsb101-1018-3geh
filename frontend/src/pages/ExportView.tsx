@@ -37,9 +37,11 @@ import { useIdbTable } from '@/hooks/useIdbTable';
 import { useBodyStore } from '@/stores/bodyStore';
 import { useCoatStore } from '@/stores/coatStore';
 import { useRoomStore } from '@/stores/roomStore';
+import { useRoomRetestStore } from '@/stores/roomRetestStore';
 import { COAT_STATE_LABEL, PAINT_TYPE_LABEL } from '@/types/coat';
 import { BODY_SHAPE_LABEL } from '@/types/body';
 import { ROOM_VERDICT_LABEL } from '@/types/room';
+import { effectiveRoomReading, effectiveRoomVerdict } from '@/types/roomRetest';
 import {
   INSPECT_VERDICT_COLOR,
   INSPECT_VERDICT_LABEL,
@@ -74,6 +76,10 @@ export default function ExportView() {
   const loadCoats = useCoatStore((state) => state.loadCoats);
   const rooms = useRoomStore((state) => state.rooms);
   const loadRooms = useRoomStore((state) => state.loadRooms);
+  const retests = useRoomRetestStore((state) => state.retests);
+  const loadRetests = useRoomRetestStore((state) => state.loadRetests);
+
+  const retestByRoom = useMemo(() => new Map(retests.map((item) => [item.roomId, item])), [retests]);
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Inspect | null>(null);
@@ -95,8 +101,8 @@ export default function ExportView() {
   const draftRooms = rooms.filter((room) => room.bodyId === draftBodyId);
 
   const reworkText = useMemo(
-    () => buildReworkList(bodies, coats, rooms, inspectTable.rows),
-    [bodies, coats, rooms, inspectTable.rows],
+    () => buildReworkList(bodies, coats, rooms, inspectTable.rows, retests),
+    [bodies, coats, rooms, inspectTable.rows, retests],
   );
 
   const openCreate = (): void => {
@@ -176,7 +182,7 @@ export default function ExportView() {
       cancelText: '取消',
       onOk: async () => {
         await importSnapshot(parsed as LacquerSnapshot);
-        await Promise.all([loadBodies(), loadCoats(), loadRooms()]);
+        await Promise.all([loadBodies(), loadCoats(), loadRooms(), loadRetests()]);
         message.success('导入完成，数据已覆盖');
       },
     });
@@ -184,7 +190,7 @@ export default function ExportView() {
 
   const handleReset = async (): Promise<void> => {
     await resetDatabase();
-    await Promise.all([loadBodies(), loadCoats(), loadRooms()]);
+    await Promise.all([loadBodies(), loadCoats(), loadRooms(), loadRetests()]);
     message.success('已清空并重新载入演示数据');
   };
 
@@ -228,9 +234,12 @@ export default function ExportView() {
                 ? '未指定'
                 : (() => {
                     const room = rooms.find((item) => item.id === record.defectRoomId);
-                    return room
-                      ? `${room.date} ${room.tempC}℃ / ${room.humidityPct}%（${ROOM_VERDICT_LABEL[room.verdict]}）`
-                      : '记录已删除';
+                    if (!room) return '记录已删除';
+                    const retest = retestByRoom.get(room.id);
+                    const reading = effectiveRoomReading(room, retest);
+                    return `${room.date} ${reading.tempC}℃ / ${reading.humidityPct}%（${
+                      ROOM_VERDICT_LABEL[effectiveRoomVerdict(room, retest)]
+                    }${retest ? '·复测' : '·入房'}）`;
                   })()}
             </Typography.Text>
           </Space>
@@ -307,6 +316,7 @@ export default function ExportView() {
         <StatBadge label="合格" value={stat.pass} suffix="条" tone="info" />
         <StatBadge label="返工" value={stat.rework} suffix="条" tone="danger" />
         <StatBadge label="荫房记录" value={rooms.length} suffix="条" tone="warning" />
+        <StatBadge label="荫房复测" value={retests.length} suffix="条" tone="info" />
       </div>
 
       <Row gutter={16}>
@@ -346,7 +356,7 @@ export default function ExportView() {
             extra={
               <Space size={4}>
                 <Button size="small" icon={<FileTextOutlined />} onClick={() => {
-                  const filename = exportReworkList(bodies, coats, rooms, inspectTable.rows);
+                  const filename = exportReworkList(bodies, coats, rooms, inspectTable.rows, retests);
                   message.success(`已导出 ${filename}`);
                 }}>
                   导出清单
@@ -372,7 +382,7 @@ export default function ExportView() {
           <Card title="整库导出" style={{ marginTop: 16 }}>
             <Space direction="vertical" size={10} style={{ width: '100%' }}>
               <Typography.Text type="secondary">
-                导出文件包含 6 张业务表全量数据与结构版本号，可在其他设备通过「导入 JSON」还原。
+                导出文件包含 7 张业务表（含荫房复测）全量数据与结构版本号，可在其他设备通过「导入 JSON」还原。
               </Typography.Text>
               <Space wrap>
                 <Button icon={<CloudDownloadOutlined />} onClick={() => void handleExport()}>
@@ -380,7 +390,7 @@ export default function ExportView() {
                 </Button>
                 <Button
                   onClick={() => {
-                    const filename = exportLedgerCsv(bodies, coats, rooms);
+                    const filename = exportLedgerCsv(bodies, coats, rooms, retests);
                     message.success(`已导出 ${filename}`);
                   }}
                 >
@@ -458,10 +468,16 @@ export default function ExportView() {
                 <Select
                   allowClear
                   placeholder="选择荫房记录"
-                  options={draftRooms.map((room) => ({
-                    value: room.id,
-                    label: `${room.date} ${room.tempC}℃/${room.humidityPct}% · ${ROOM_VERDICT_LABEL[room.verdict]}`,
-                  }))}
+                  options={draftRooms.map((room) => {
+                    const retest = retestByRoom.get(room.id);
+                    const reading = effectiveRoomReading(room, retest);
+                    return {
+                      value: room.id,
+                      label: `${room.date} ${reading.tempC}℃/${reading.humidityPct}% · ${
+                        ROOM_VERDICT_LABEL[effectiveRoomVerdict(room, retest)]
+                      }${retest ? '（复测）' : ''}`,
+                    };
+                  })}
                 />
               </Form.Item>
             </Space>

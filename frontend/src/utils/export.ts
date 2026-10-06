@@ -5,6 +5,8 @@
 import type { Body } from '@/types/body';
 import type { Coat } from '@/types/coat';
 import type { Room } from '@/types/room';
+import type { RoomRetest } from '@/types/roomRetest';
+import { effectiveRoomReading, effectiveRoomVerdict } from '@/types/roomRetest';
 import type { Inspect } from '@/types/inspect';
 import { BODY_MATERIAL_LABEL, BODY_SHAPE_LABEL } from '@/types/body';
 import { COAT_STATE_LABEL, PAINT_TYPE_LABEL } from '@/types/coat';
@@ -51,8 +53,10 @@ export function buildReworkList(
   coats: Coat[],
   rooms: Room[],
   inspects: Inspect[],
+  retests: RoomRetest[] = [],
 ): string {
   const lines: string[] = ['漆器髹涂返工清单', `生成时间：${new Date().toLocaleString('zh-CN')}`, ''];
+  const retestByRoom = new Map(retests.map((item) => [item.roomId, item]));
   const reworks = inspects.filter((item) => item.verdict === 'rework');
   if (reworks.length === 0) {
     lines.push('当前无返工记录。');
@@ -72,13 +76,21 @@ export function buildReworkList(
           : '未指定'
       }`,
     );
-    lines.push(
-      `   关联荫房：${
-        room
-          ? `${room.date}　${room.tempC}℃ / ${room.humidityPct}%（${ROOM_VERDICT_LABEL[room.verdict]}）`
-          : '未指定'
-      }`,
-    );
+    if (room) {
+      const retest = retestByRoom.get(room.id);
+      const reading = effectiveRoomReading(room, retest);
+      const finalVerdict = effectiveRoomVerdict(room, retest);
+      lines.push(
+        `   关联荫房：${room.date}　最终读数 ${reading.tempC}℃ / ${reading.humidityPct}%（${ROOM_VERDICT_LABEL[finalVerdict]}${retest ? '·复测' : '·入房'}）`,
+      );
+      if (retest) {
+        lines.push(
+          `   入房读数：${room.tempC}℃ / ${room.humidityPct}%（${ROOM_VERDICT_LABEL[room.verdict]}）；复测人：${retest.operator || '未填写'}　复测时段：${retest.retestInAt}~${retest.retestOutAt}`,
+        );
+      }
+    } else {
+      lines.push('   关联荫房：未指定');
+    }
     lines.push('');
   });
   return lines.join('\n');
@@ -90,16 +102,22 @@ export function exportReworkList(
   coats: Coat[],
   rooms: Room[],
   inspects: Inspect[],
+  retests: RoomRetest[] = [],
 ): string {
   const filename = `漆器返工清单-${stampSuffix()}.txt`;
-  download(filename, buildReworkList(bodies, coats, rooms, inspects), 'text/plain;charset=utf-8');
+  download(filename, buildReworkList(bodies, coats, rooms, inspects, retests), 'text/plain;charset=utf-8');
   return filename;
 }
 
-/** 工序台账 CSV（全部胎体 + 道次 + 荫房） */
-export function exportLedgerCsv(bodies: Body[], coats: Coat[], rooms: Room[]): string {
-  const header = ['胎体编号', '材质', '器型', '尺寸(mm)', '委托/藏家', '道次', '漆种', '色名', '涂刷日期', '湿膜(μm)', '道次状态', '待复检', '荫房日期', '温度(℃)', '湿度(%)', '判定'];
+/** 工序台账 CSV（全部胎体 + 道次 + 荫房，判定按复测优先口径） */
+export function exportLedgerCsv(bodies: Body[], coats: Coat[], rooms: Room[], retests: RoomRetest[] = []): string {
+  const header = [
+    '胎体编号', '材质', '器型', '尺寸(mm)', '委托/藏家', '道次', '漆种', '色名', '涂刷日期', '湿膜(μm)',
+    '道次状态', '待复检', '荫房日期', '入房温度(℃)', '入房湿度(%)', '入房判定',
+    '复测温度(℃)', '复测湿度(%)', '复测判定', '复测时段', '复测人', '最终判定',
+  ];
   const lines: string[] = [header.map(csvCell).join(',')];
+  const retestByRoom = new Map(retests.map((item) => [item.roomId, item]));
   bodies.forEach((body) => {
     const bodyCoats = coats.filter((item) => item.bodyId === body.id).sort((a, b) => a.seq - b.seq);
     const bodyRooms = rooms.filter((item) => item.bodyId === body.id);
@@ -107,6 +125,7 @@ export function exportLedgerCsv(bodies: Body[], coats: Coat[], rooms: Room[]): s
     for (let index = 0; index < rowCount; index += 1) {
       const coat = bodyCoats[index];
       const room = bodyRooms[index];
+      const retest = room ? retestByRoom.get(room.id) : undefined;
       lines.push(
         [
           index === 0 ? body.code : '',
@@ -125,6 +144,12 @@ export function exportLedgerCsv(bodies: Body[], coats: Coat[], rooms: Room[]): s
           room ? room.tempC : '',
           room ? room.humidityPct : '',
           room ? ROOM_VERDICT_LABEL[room.verdict] : '',
+          retest ? retest.tempC : '',
+          retest ? retest.humidityPct : '',
+          retest ? ROOM_VERDICT_LABEL[retest.verdict] : '',
+          retest ? `${retest.retestInAt}~${retest.retestOutAt}` : '',
+          retest ? retest.operator : '',
+          room ? ROOM_VERDICT_LABEL[effectiveRoomVerdict(room, retest)] : '',
         ]
           .map(csvCell)
           .join(','),

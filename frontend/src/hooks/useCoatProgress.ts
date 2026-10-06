@@ -6,8 +6,10 @@ import { useCallback, useMemo } from 'react';
 import { useBodyStore } from '@/stores/bodyStore';
 import { useCoatStore } from '@/stores/coatStore';
 import { useRoomStore } from '@/stores/roomStore';
+import { useRoomRetestStore } from '@/stores/roomRetestStore';
 import { dryingHours, roomStayHours } from '@/utils/humidity';
 import { ROOM_VERDICT_LABEL } from '@/types/room';
+import { effectiveRoomReading, effectiveRoomVerdict, type RoomRetest } from '@/types/roomRetest';
 import { COAT_STATE_LABEL } from '@/types/coat';
 import type { BodyStat } from '@/types/body';
 
@@ -42,6 +44,13 @@ export function useCoatProgress(): CoatProgressResult {
   const bodies = useBodyStore((state) => state.bodies);
   const coats = useCoatStore((state) => state.coats);
   const rooms = useRoomStore((state) => state.rooms);
+  const retests = useRoomRetestStore((state) => state.retests);
+
+  const retestByRoom = useMemo(() => {
+    const map = new Map<string, RoomRetest>();
+    retests.forEach((item) => map.set(item.roomId, item));
+    return map;
+  }, [retests]);
 
   const map = useMemo<Record<string, BodyStat>>(() => {
     const result: Record<string, BodyStat> = {};
@@ -55,7 +64,10 @@ export function useCoatProgress(): CoatProgressResult {
       const done = bodyCoats.filter((coat) => coat.state === 'done').length;
       const current = bodyCoats.find((coat) => coat.state !== 'done');
       const lastRoom = bodyRooms[bodyRooms.length - 1];
-      const overCount = bodyRooms.filter((room) => room.verdict !== 'suitable').length;
+      // 超标次数按最终判定：有复测按复测，没有按入房
+      const overCount = bodyRooms.filter(
+        (room) => effectiveRoomVerdict(room, retestByRoom.get(room.id)) !== 'suitable',
+      ).length;
       const waitHours = lastRoom
         ? roomStayHours(lastRoom.inAt, lastRoom.outAt)
         : lastRoom === undefined && bodyCoats[0]
@@ -70,7 +82,13 @@ export function useCoatProgress(): CoatProgressResult {
         roomCount: bodyRooms.length,
         roomOverCount: overCount,
         lastRoomVerdict: lastRoom
-          ? `${lastRoom.date}　${lastRoom.tempC}℃ / ${lastRoom.humidityPct}%（${ROOM_VERDICT_LABEL[lastRoom.verdict]}）`
+          ? (() => {
+              const retest = retestByRoom.get(lastRoom.id);
+              const reading = effectiveRoomReading(lastRoom, retest);
+              return `${lastRoom.date}　${reading.tempC}℃ / ${reading.humidityPct}%（${
+                ROOM_VERDICT_LABEL[effectiveRoomVerdict(lastRoom, retest)]
+              }${retest ? '·复测' : ''}）`;
+            })()
           : '暂无记录',
         polishCount: 0,
         inlayCount: 0,
@@ -78,7 +96,7 @@ export function useCoatProgress(): CoatProgressResult {
       };
     });
     return result;
-  }, [bodies, coats, rooms]);
+  }, [bodies, coats, rooms, retestByRoom]);
 
   const list = useMemo(() => bodies.map((body) => map[body.id] ?? { ...EMPTY_STAT, bodyId: body.id }), [bodies, map]);
 
